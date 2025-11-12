@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Portal Assistant Bridge",
+  "version": "0.1.0",
+  "description": "پل ارتباطی بین بات تلگرام و پنل portal.ir برای اعلان لحظه‌ای محصولات.",
+  "permissions": ["sidePanel", "storage", "notifications", "tabs"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "https://*/"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "دستیار هوشمند فروشگاه"
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}
+
