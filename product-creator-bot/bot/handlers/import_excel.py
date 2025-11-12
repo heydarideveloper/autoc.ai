@@ -40,6 +40,39 @@ from .new_product import (
 
 logger = logging.getLogger(__name__)
 
+PERSIAN_CHAR_MAP = {
+    ord("ي"): "ی",
+    ord("ك"): "ک",
+    ord("ۀ"): "ه",
+    ord("ة"): "ه",
+    ord("\u200c"): " ",
+    ord("\u200f"): "",
+    ord("\ufeff"): "",
+}
+
+PERSIAN_DIGIT_MAP = {
+    ord("۰"): "0",
+    ord("۱"): "1",
+    ord("۲"): "2",
+    ord("۳"): "3",
+    ord("۴"): "4",
+    ord("۵"): "5",
+    ord("۶"): "6",
+    ord("۷"): "7",
+    ord("۸"): "8",
+    ord("۹"): "9",
+    ord("٠"): "0",
+    ord("١"): "1",
+    ord("٢"): "2",
+    ord("٣"): "3",
+    ord("٤"): "4",
+    ord("٥"): "5",
+    ord("٦"): "6",
+    ord("٧"): "7",
+    ord("٨"): "8",
+    ord("٩"): "9",
+}
+
 
 def build_conversation() -> ConversationHandler:
     return ConversationHandler(
@@ -58,6 +91,15 @@ def build_conversation() -> ConversationHandler:
         name=constants.EXCEL_IMPORT_CONV,
         persistent=False,
     )
+
+
+def _standardize_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value)
+    text = text.translate(PERSIAN_CHAR_MAP)
+    text = text.translate(PERSIAN_DIGIT_MAP)
+    return text.strip()
 
 
 async def start_excel_import(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -625,12 +667,33 @@ async def _build_variant_payloads(
         if stock < 0:
             stock = 0
 
-        cost = _extract_numeric_value(item.get("cost"), default=0)
+        primary_cost = item.get("cost")
+        cost = _extract_numeric_value(primary_cost, default=0)
         if cost <= 0:
-            raise ValueError(
-                f"قیمت خرید برای متغیر «{variant_title}» در محصول «{parent_title}» یافت نشد. "
-                "لطفاً ستون قیمت خرید را در فایل بررسی کن."
+            fallback_sources = [
+                item.get("purchase_price"),
+                item.get("buy_price"),
+                item.get("purchase"),
+                item.get("unit_cost"),
+                item.get("unit_price"),
+                item.get("price"),
+                item.get("final_price"),
+            ]
+            for source in fallback_sources:
+                cost = _extract_numeric_value(source, default=0)
+                if cost > 0:
+                    break
+        if cost <= 0 and count:
+            average_so_far = total_cost / count if count else 0
+            if average_so_far > 0:
+                cost = average_so_far
+        if cost <= 0:
+            logger.warning(
+                "purchase cost missing for variant %s of product %s; using fallback value 1",
+                variant_title,
+                parent_title,
             )
+            cost = 1
         total_cost += cost
         count += 1
 
@@ -742,7 +805,7 @@ def _fallback_grouping_from_dataframe(df: pd.DataFrame, meta: Dict[str, Optional
 
 
 def _guess_product_column(columns: List[str]) -> str:
-    lowered = [(col or "").strip().lower() for col in columns]
+    lowered = [_standardize_text(col).lower() for col in columns]
     for keyword in ("product", "name", "title", "محصول", "نام", "عنوان"):
         for index, value in enumerate(lowered):
             if keyword in value:
@@ -751,11 +814,11 @@ def _guess_product_column(columns: List[str]) -> str:
 
 
 def _find_first_column(columns: List[str], candidates: List[str]) -> Optional[str]:
-    lowered = [(col or "").strip().lower() for col in columns]
-    for keyword in candidates:
-        indicator = keyword.lower()
+    lowered = [_standardize_text(col).lower() for col in columns]
+    normalized_candidates = [_standardize_text(keyword).lower() for keyword in candidates]
+    for indicator in normalized_candidates:
         for index, value in enumerate(lowered):
-            if indicator in value:
+            if indicator and indicator in value:
                 return columns[index]
     return None
 
@@ -765,7 +828,7 @@ def _extract_numeric_value(value: Any, default: float = 0) -> float:
         return float(default)
     if isinstance(value, (int, float)):
         return float(value)
-    text = str(value).strip().replace(",", "")
+    text = _standardize_text(value).replace(",", "")
     try:
         return float(text)
     except ValueError:
@@ -788,7 +851,26 @@ def _detect_dataframe_columns(df: pd.DataFrame) -> Dict[str, Optional[str]]:
         raise ValueError("ستون عنوان محصول یافت نشد.")
 
     stock_column = _find_first_column(columns, ["stock", "quantity", "inventory", "موجودی"])
-    cost_column = _find_first_column(columns, ["cost", "price", "purchase", "قیمت خرید", "هزینه", "خرید"])
+    cost_column = _find_first_column(
+        columns,
+        [
+            "cost",
+            "price",
+            "purchase",
+            "buy",
+            "unit cost",
+            "unit price",
+            "قیمت خرید",
+            "قیمت تمام شده",
+            "قیمت فی",
+            "فی",
+            "في",
+            "هزینه",
+            "هزينه",
+            "خرید",
+            "خريد",
+        ],
+    )
     sku_column = _find_first_column(columns, ["sku", "کد", "شناسه", "کد کالا"])
 
     attribute_candidates = [
